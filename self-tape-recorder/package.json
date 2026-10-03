@@ -1,0 +1,18 @@
+{
+  "name": "self-tape-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drop-in web component that lets actors record audition self-tapes in the browser.",
+  "type": "module",
+  "main": "self-tape-recorder.js",
+  "scripts": {
+    "start": "node dev-server.mjs",
+    "test": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
