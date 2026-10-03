@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Self-Tape Studio</title>
+  <script type="module" src="./self-tape-studio.js"></script>
+  <style>
+    body { margin: 0; background: #f6f6f8; color: #1a1a1f; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+    h1 { margin: 0 0 4px; font-size: 24px; }
+    .lede { margin: 0 0 16px; color: #5d5d68; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Self-tape studio</h1>
+    <p class="lede">Add your sides, choose your scene and character, then record. The app reads the other parts.</p>
+    <self-tape-studio actor-name="Jane Doe" upload-url="/upload" max-duration="300"></self-tape-studio>
+  </main>
+</body>
+</html>

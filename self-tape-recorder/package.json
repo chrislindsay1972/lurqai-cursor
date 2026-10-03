@@ -2,15 +2,16 @@
   "name": "self-tape-recorder",
   "version": "0.1.0",
   "private": true,
-  "description": "Drop-in web component that lets actors record audition self-tapes in the browser.",
+  "description": "Drop-in web components for audition self-tapes: a studio (scripts, a reader for the other parts, My Videos, sharing) and a recorder.",
   "type": "module",
-  "main": "self-tape-recorder.js",
+  "main": "self-tape-studio.js",
   "scripts": {
     "start": "node dev-server.mjs",
-    "test": "node test/smoke.mjs"
+    "test": "node --test test/unit.mjs && node test/smoke.mjs && node test/studio.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.56.0"
+    "pdfjs-dist": "6.3.289",
+    "playwright": "1.56.1"
   },
   "engines": {
     "node": ">=20"

@@ -3,6 +3,8 @@
  *
  * Camera + mic preview, sides shown over the preview (auto-scrolling while
  * recording), countdown, scene and slate takes, review, download and upload.
+ * Give it a script (the script property) and it reads the other characters'
+ * lines aloud, waiting for the actor's lines in between.
  * No dependencies and no build step:
  *
  *   <script type="module" src="self-tape-recorder.js"></script>
@@ -11,6 +13,7 @@
  *
  * Attributes, properties, methods and events are documented in README.md.
  */
+import { createCueDetector, estimateSeconds, loadVoices, speak, unlockSpeech } from './scene-reader.js';
 
 const QUALITY = {
   '1080p': { width: 1920, height: 1080, videoBitsPerSecond: 6_000_000 },
@@ -206,6 +209,19 @@ input[type="range"] { accent-color: var(--str-primary); }
 .confirm .confirm-label { display: inline; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
+/* A scene needs more room than plain sides; size the text to the screen. */
+.prompter.script { max-height: 50%; font-size: var(--str-prompter-size, clamp(15px, 2.6cqw, 26px)); text-align: left; }
+.prompter .sl { margin: 0 0 .4em; padding: 2px 8px; border-radius: 6px; }
+.prompter .sl.heading { font-size: .62em; font-weight: 700; letter-spacing: .06em; opacity: .7; }
+.prompter .sl.action, .prompter .sl.transition { font-size: .7em; font-style: italic; opacity: .65; }
+.prompter .who { display: block; font-size: .58em; font-weight: 700; letter-spacing: .08em; opacity: .75; }
+.prompter .sl.other { opacity: .8; }
+.prompter .sl.mine { color: #ffe08a; }
+.prompter .sl.done { opacity: .35; }
+.prompter .sl.current { opacity: 1; background: rgba(255, 255, 255, .16); }
+.next-cue { position: absolute; right: 12px; bottom: 12px; }
+.script-summary { margin: 0; color: var(--str-text); font-size: 14px; }
+
 @container (max-width: 760px) {
   .str { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .takes-list { max-height: none; }
@@ -241,6 +257,7 @@ const MARKUP = `
         <p class="start-error" data-el="startError" role="alert" hidden></p>
       </div>
       <button type="button" class="btn back" data-el="backButton" hidden>&larr; Back to camera</button>
+      <button type="button" class="btn next-cue" data-el="nextCue" hidden>Next line &rsaquo;</button>
     </div>
     <div class="toolbar" part="toolbar">
       <div class="segmented" role="group" aria-label="Recording type">
@@ -257,11 +274,21 @@ const MARKUP = `
     </div>
     <p class="notice" data-el="notice" role="status" hidden></p>
     <div class="panel" data-el="sidesPanel" hidden>
-      <label class="wide">Sides or monologue
+      <label class="wide" data-el="sidesLabel">Sides or monologue
         <textarea data-el="sidesInput" rows="6" placeholder="Paste your lines here. They show over the preview while you record and never appear in the video."></textarea>
       </label>
+      <p class="wide script-summary" data-el="scriptSummary" data-script-only hidden></p>
+      <label class="check" data-script-only hidden><input type="checkbox" data-el="readerCheck" checked> Read the other parts aloud</label>
+      <label data-script-only hidden>A pause this long ends your line
+        <select data-el="pauseSelect">
+          <option value="0.7">Short (0.7 seconds)</option>
+          <option value="1.2" selected>Normal (1.2 seconds)</option>
+          <option value="2">Long (2 seconds)</option>
+        </select>
+      </label>
+      <label class="check" data-script-only hidden><input type="checkbox" data-el="autoStopCheck" checked> Stop recording when the scene ends</label>
       <label class="check"><input type="checkbox" data-el="prompterCheck"> Show on screen</label>
-      <label>Scroll speed while recording <input type="range" data-el="speedRange" min="0" max="100" value="30"></label>
+      <label data-el="speedLabel">Scroll speed while recording <input type="range" data-el="speedRange" min="0" max="100" value="30"></label>
       <label>Text size <input type="range" data-el="sizeRange" min="16" max="48" value="26"></label>
     </div>
     <div class="panel" data-el="settingsPanel" hidden>
@@ -297,7 +324,13 @@ const MARKUP = `
 `;
 
 export class SelfTapeRecorder extends HTMLElement {
-  static observedAttributes = ['actor-name', 'character', 'project', 'sides', 'countdown', 'quality', 'max-duration', 'upload-url'];
+  static observedAttributes = [
+    'actor-name', 'character', 'project', 'sides', 'countdown', 'quality', 'max-duration', 'cue-pause',
+    'upload-url', 'submit-label', 'submitting-label', 'submitted-label',
+  ];
+
+  /** Optional async (line, { voice, signal }) => void that reads a line with your own voices. */
+  readerSpeak = null;
 
   #els = {};
   #state = 'off'; // off | starting | ready | countdown | recording | saving | error
@@ -318,12 +351,19 @@ export class SelfTapeRecorder extends HTMLElement {
   #micLevel = 0;
   #timers = {};
   #frames = {};
+  #script = null;
+  #voices = [];
+  #reader = null;
+  #analyser = null;
+  #samples = null;
+  #scriptOnly = [];
 
   constructor() {
     super();
     const root = this.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>${STYLE}</style>${MARKUP}`;
     for (const el of root.querySelectorAll('[data-el]')) this.#els[el.dataset.el] = el;
+    this.#scriptOnly = [...root.querySelectorAll('[data-script-only]')];
     this.#bindUi();
   }
 
@@ -359,6 +399,13 @@ export class SelfTapeRecorder extends HTMLElement {
       if (this.#state === 'ready') this.start(); // reopen the camera at the new size
     } else if (name === 'max-duration') {
       this.#render();
+    } else if (name === 'cue-pause') {
+      const seconds = positiveNumber(value);
+      if (!seconds) return;
+      if (![...e.pauseSelect.options].some((option) => Number(option.value) === seconds)) {
+        e.pauseSelect.add(new Option(`${seconds} seconds`, String(seconds)));
+      }
+      e.pauseSelect.value = [...e.pauseSelect.options].find((option) => Number(option.value) === seconds).value;
     } else {
       this.#renderTakes(); // actor-name, character and project feed filenames; upload-url shows Submit
     }
@@ -379,8 +426,39 @@ export class SelfTapeRecorder extends HTMLElement {
   set sides(text) {
     const e = this.#els;
     e.sidesInput.value = text ?? '';
-    e.prompterText.textContent = e.sidesInput.value;
+    if (!this.#script) e.prompterText.textContent = e.sidesInput.value;
     if (e.sidesInput.value.trim()) e.prompterCheck.checked = true;
+    this.#render();
+  }
+
+  /**
+   * The scene to perform: { title, character, lines, voices }. lines come from
+   * script-parser.js ({ kind, text, character }); character is the actor's part;
+   * voices maps other characters to a voiceURI, or 'skip'. Set null to go back
+   * to plain sides.
+   */
+  get script() { return this.#script; }
+  set script(value) {
+    this.#stopReader();
+    if (!Array.isArray(value?.lines)) {
+      this.#script = null;
+    } else {
+      const character = String(value.character ?? '').trim().toUpperCase();
+      this.#script = {
+        title: value.title ?? '',
+        character,
+        voices: { ...value.voices },
+        lines: value.lines.map((line) => ({
+          ...line,
+          mine: line.kind === 'dialogue' && String(line.character).toUpperCase() === character,
+        })),
+      };
+      this.#els.prompterCheck.checked = true;
+      loadVoices().then((voices) => {
+        this.#voices = voices;
+      });
+    }
+    this.#renderScript();
     this.#render();
   }
 
@@ -422,6 +500,7 @@ export class SelfTapeRecorder extends HTMLElement {
   stop() {
     this.#session++;
     this.#cancelCountdown?.();
+    this.#stopReader();
     this.stopRecording();
     this.#stopStream();
     this.#setState('off');
@@ -448,6 +527,7 @@ export class SelfTapeRecorder extends HTMLElement {
     clearTimeout(this.#timers.thumbnail);
     this.#thumbnail ??= this.#captureFrame();
     this.#stopPrompterScroll();
+    this.#stopReader();
     this.#setState('saving');
     const recorder = this.#recorder;
     if (recorder && recorder.state !== 'inactive') recorder.stop();
@@ -586,13 +666,11 @@ export class SelfTapeRecorder extends HTMLElement {
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
     context.createMediaStreamSource(stream).connect(analyser);
-    const samples = new Float32Array(analyser.fftSize);
+    this.#analyser = analyser;
+    this.#samples = new Float32Array(analyser.fftSize);
     const fill = this.#els.meterFill;
     const draw = () => {
-      analyser.getFloatTimeDomainData(samples);
-      let peak = 0;
-      for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
-      const decibels = 20 * Math.log10(peak || 1e-6);
+      const decibels = this.#readMicDb();
       const level = Math.min(1, Math.max(0, (decibels + 60) / 60));
       // Rise instantly, fall slowly, like a hardware meter.
       this.#micLevel = level > this.#micLevel ? level : this.#micLevel * 0.9 + level * 0.1;
@@ -609,8 +687,18 @@ export class SelfTapeRecorder extends HTMLElement {
     cancelAnimationFrame(this.#frames.meter);
     this.#audioContext?.close().catch(() => {});
     this.#audioContext = null;
+    this.#analyser = null;
     this.#micLevel = 0;
     this.#els.meterFill.style.transform = 'scaleX(0)';
+  }
+
+  /** Current microphone peak level in dBFS (-100 when there's no mic). */
+  #readMicDb() {
+    if (!this.#analyser) return -100;
+    this.#analyser.getFloatTimeDomainData(this.#samples);
+    let peak = 0;
+    for (const sample of this.#samples) peak = Math.max(peak, Math.abs(sample));
+    return 20 * Math.log10(peak || 1e-5);
   }
 
   // ---- Recording -----------------------------------------------------------
@@ -686,7 +774,8 @@ export class SelfTapeRecorder extends HTMLElement {
     this.#timers.thumbnail = setTimeout(() => {
       this.#thumbnail = this.#captureFrame();
     }, 1000);
-    this.#startPrompterScroll();
+    if (this.#readerOn()) this.#startReader();
+    else this.#startPrompterScroll();
     this.#announce('Recording');
     this.#emit('recording-start', { kind, mimeType: recorder.mimeType });
   }
@@ -708,6 +797,8 @@ export class SelfTapeRecorder extends HTMLElement {
     clearInterval(this.#timers.tick);
     clearTimeout(this.#timers.thumbnail);
     this.#stopPrompterScroll();
+    this.#stopReader();
+    this.#highlightLine(-1);
     this.#recorder = null;
     if (this.#state === 'recording' || this.#state === 'saving') this.#setState(this.#stream ? 'ready' : 'off');
     this.#els.prompter.scrollTop = 0;
@@ -812,10 +903,14 @@ export class SelfTapeRecorder extends HTMLElement {
   }
 
   #postTake(url, take, { onProgress }) {
-    return new Promise((resolve, reject) => {
-      const form = new FormData();
-      form.append(this.getAttribute('upload-field') || 'video', take.blob, take.filename);
-      const fields = {
+    return postVideo({
+      url,
+      blob: take.blob,
+      filename: take.filename,
+      field: this.getAttribute('upload-field') || 'video',
+      withCredentials: this.hasAttribute('upload-credentials'),
+      onProgress,
+      fields: {
         filename: take.filename,
         kind: take.kind,
         take: take.number,
@@ -824,34 +919,7 @@ export class SelfTapeRecorder extends HTMLElement {
         actorName: this.getAttribute('actor-name'),
         character: this.getAttribute('character'),
         project: this.getAttribute('project'),
-      };
-      for (const [name, value] of Object.entries(fields)) {
-        if (value !== null && value !== undefined && value !== '') form.append(name, String(value));
-      }
-      const xhr = new XMLHttpRequest(); // fetch() can't report upload progress
-      xhr.open('POST', url);
-      xhr.withCredentials = this.hasAttribute('upload-credentials');
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable) onProgress(event.loaded / event.total);
-      });
-      xhr.addEventListener('load', () => {
-        if (xhr.status === 413) {
-          reject(new Error('This take is too big for the server. Try a shorter take, or 720p in Settings.'));
-          return;
-        }
-        if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(serverMessage(xhr) || `Upload failed (HTTP ${xhr.status}).`));
-          return;
-        }
-        try {
-          resolve(JSON.parse(xhr.responseText));
-        } catch {
-          resolve(xhr.responseText);
-        }
-      });
-      xhr.addEventListener('error', () => reject(new Error('Upload failed. Check your connection and try again.')));
-      xhr.addEventListener('abort', () => reject(new Error('Upload cancelled.')));
-      xhr.send(form);
+      },
     });
   }
 
@@ -899,16 +967,21 @@ export class SelfTapeRecorder extends HTMLElement {
   }
 
   #paintStatus(item, take) {
+    const labels = {
+      submit: this.getAttribute('submit-label') || 'Submit',
+      submitting: this.getAttribute('submitting-label') || 'Uploading',
+      submitted: this.getAttribute('submitted-label') || 'Submitted',
+    };
     const status = item.querySelector('.take-status');
     status.textContent = {
-      uploading: `Uploading… ${Math.round(take.progress * 100)}%`,
-      submitted: 'Submitted ✓',
+      uploading: `${labels.submitting}…${take.progress > 0 ? ` ${Math.round(take.progress * 100)}%` : ''}`,
+      submitted: `${labels.submitted} ✓`,
       failed: take.error ?? 'Upload failed.',
     }[take.status] ?? '';
     status.classList.toggle('ok', take.status === 'submitted');
     status.classList.toggle('err', take.status === 'failed');
     const submit = item.querySelector('[data-action="submit"]');
-    const action = { uploading: 'Uploading', submitted: 'Submitted', failed: 'Retry' }[take.status] ?? 'Submit';
+    const action = { uploading: labels.submitting, submitted: labels.submitted, failed: 'Retry' }[take.status] ?? labels.submit;
     submit.querySelector('span').textContent = action;
     submit.setAttribute('aria-label', `${action} ${take.label}`);
     submit.disabled = take.status === 'uploading';
@@ -978,12 +1051,156 @@ export class SelfTapeRecorder extends HTMLElement {
     }
   }
 
+  // ---- Reader ----------------------------------------------------------------
+
+  #readerOn() {
+    return Boolean(this.#script && this.#els.readerCheck.checked);
+  }
+
+  #renderScript() {
+    const e = this.#els;
+    const script = this.#script;
+    e.prompter.classList.toggle('script', Boolean(script));
+    if (!script) {
+      e.prompterText.textContent = e.sidesInput.value;
+      return;
+    }
+    const mine = script.lines.filter((line) => line.mine).length;
+    const others = [...new Set(script.lines.filter((line) => line.kind === 'dialogue' && !line.mine).map((line) => line.character))];
+    e.scriptSummary.textContent =
+      `${script.title ? `${script.title}: ` : ''}you're playing ${script.character || 'nobody yet'} (${mine} ${mine === 1 ? 'line' : 'lines'}).` +
+      (others.length ? ` The reader plays ${others.join(', ')}.` : '');
+    e.prompterText.replaceChildren(
+      ...script.lines.map((line, index) => {
+        const item = document.createElement('p');
+        item.className = `sl ${line.kind}`;
+        item.dataset.index = String(index);
+        if (line.kind === 'dialogue') {
+          item.classList.add(line.mine ? 'mine' : 'other');
+          const who = document.createElement('span');
+          who.className = 'who';
+          who.textContent = line.character;
+          item.append(who, line.text);
+        } else {
+          item.textContent = line.text;
+        }
+        return item;
+      }),
+    );
+    e.prompter.scrollTop = 0;
+  }
+
+  #startReader() {
+    this.#stopReader();
+    if (!this.#readerOn()) return;
+    const pauseMs = (Number(this.#els.pauseSelect.value) || 1.2) * 1000;
+    this.#reader = { index: -1, finished: false, line: null, timer: null, timeout: null, detector: createCueDetector({ pauseMs }) };
+    this.#nextCue();
+  }
+
+  #stopReader() {
+    const reader = this.#reader;
+    if (!reader) return;
+    reader.line?.abort();
+    clearInterval(reader.timer);
+    clearTimeout(reader.timeout);
+    this.#reader = null;
+    this.#render();
+  }
+
+  /** Goes to the next line: reads it aloud, or listens while the actor says it. */
+  #nextCue() {
+    const reader = this.#reader;
+    if (!reader || reader.finished) return;
+    reader.line?.abort();
+    clearInterval(reader.timer);
+    clearTimeout(reader.timeout);
+    const { lines, voices } = this.#script;
+    let index = reader.index + 1;
+    while (index < lines.length && (lines[index].kind !== 'dialogue' || (!lines[index].mine && voices[lines[index].character] === 'skip'))) {
+      index++;
+    }
+    reader.index = index;
+    this.#highlightLine(index);
+    if (index >= lines.length) {
+      this.#finishScene(reader);
+      return;
+    }
+    reader.line = new AbortController();
+    if (lines[index].mine) this.#listenFor(lines[index], reader, index);
+    else this.#readAloud(lines[index], reader, index);
+    this.#render();
+  }
+
+  async #readAloud(line, reader, index) {
+    const say = this.readerSpeak ?? ((cue, options) => speak(cue.text, options));
+    try {
+      await say(line, { voice: this.#voiceFor(line.character), signal: reader.line.signal });
+    } catch {
+      // A voice that fails shouldn't spoil the take: carry on with the scene.
+    }
+    if (this.#reader !== reader || reader.index !== index) return; // skipped or stopped meanwhile
+    reader.timeout = setTimeout(() => this.#nextCue(), 250);
+  }
+
+  #listenFor(line, reader, index) {
+    reader.detector.reset({ minSpeechMs: Math.max(600, estimateSeconds(line.text) * 400) });
+    // Let the reader's voice die away first so it isn't taken for the actor.
+    const listenFrom = performance.now() + 300;
+    reader.timer = setInterval(() => {
+      if (this.#reader !== reader || reader.index !== index) {
+        clearInterval(reader.timer);
+        return;
+      }
+      const now = performance.now();
+      if (now >= listenFrom && reader.detector.update(this.#readMicDb(), now) === 'done') this.#nextCue();
+    }, 50);
+  }
+
+  #finishScene(reader) {
+    reader.finished = true;
+    this.#announce('End of the scene.');
+    this.#render();
+    this.#emit('scene-end', { recording: this.#state === 'recording' });
+    if (this.#state === 'recording' && this.#els.autoStopCheck.checked) {
+      // Hold the moment for a beat, as casting expects, then stop.
+      reader.timeout = setTimeout(() => {
+        if (this.#reader === reader) this.stopRecording();
+      }, 2500);
+    }
+  }
+
+  #highlightLine(index) {
+    const items = this.#els.prompterText.children;
+    for (const item of items) {
+      if (!item.dataset.index) continue;
+      const position = Number(item.dataset.index);
+      item.classList.toggle('current', position === index);
+      item.classList.toggle('done', index >= 0 && position < index);
+    }
+    const current = items[index];
+    if (current) this.#els.prompter.scrollTo({ top: Math.max(0, current.offsetTop - 8), behavior: 'smooth' });
+  }
+
+  #voiceFor(character) {
+    const chosen = this.#script.voices[character];
+    if (chosen) return this.#voices.find((voice) => voice.voiceURI === chosen) ?? null;
+    // Otherwise give each character a different voice.
+    const others = [...new Set(this.#script.lines.filter((line) => line.kind === 'dialogue' && !line.mine).map((line) => line.character))];
+    return this.#voices.length ? this.#voices[Math.max(0, others.indexOf(character)) % this.#voices.length] : null;
+  }
+
   // ---- UI plumbing ---------------------------------------------------------
 
   #bindUi() {
     const e = this.#els;
     e.startButton.addEventListener('click', () => this.start());
-    e.recordButton.addEventListener('click', () => this.#toggleRecording());
+    e.recordButton.addEventListener('click', () => {
+      if (this.#readerOn()) unlockSpeech(); // iPhones only allow speech that starts from a tap
+      this.#toggleRecording();
+    });
+    e.nextCue.addEventListener('click', () => this.#nextCue());
+    e.readerCheck.addEventListener('change', () => this.#render());
     e.backButton.addEventListener('click', () => this.#showLive());
     for (const button of [e.kindScene, e.kindSlate]) {
       button.addEventListener('click', () => {
@@ -1002,7 +1219,7 @@ export class SelfTapeRecorder extends HTMLElement {
       control.addEventListener('change', () => this.#render());
     }
     e.sidesInput.addEventListener('input', () => {
-      e.prompterText.textContent = e.sidesInput.value;
+      if (!this.#script) e.prompterText.textContent = e.sidesInput.value;
       this.#render();
     });
     e.sizeRange.addEventListener('input', () => e.prompter.style.setProperty('--str-prompter-size', `${e.sizeRange.value}px`));
@@ -1038,7 +1255,12 @@ export class SelfTapeRecorder extends HTMLElement {
     e.playback.hidden = live;
     e.backButton.hidden = live;
     e.guides.hidden = !(live && cameraOn && e.guidesCheck.checked);
-    e.prompter.hidden = !(live && cameraOn && e.prompterCheck.checked && e.sidesInput.value.trim());
+    const scriptMode = Boolean(this.#script);
+    for (const el of this.#scriptOnly) el.hidden = !scriptMode;
+    e.sidesLabel.hidden = scriptMode;
+    e.speedLabel.hidden = scriptMode && e.readerCheck.checked;
+    e.prompter.hidden = !(live && cameraOn && e.prompterCheck.checked && (scriptMode || e.sidesInput.value.trim()));
+    e.nextCue.hidden = !(live && this.#reader && !this.#reader.finished);
     e.countdown.hidden = state !== 'countdown';
     e.recBadge.hidden = state !== 'recording';
     e.rotateHint.hidden = !(live && cameraOn && e.preview.videoHeight > e.preview.videoWidth);
@@ -1101,14 +1323,22 @@ export class SelfTapeRecorder extends HTMLElement {
       this.#cancelCountdown?.();
       return;
     }
+    const target = event.composedPath()[0];
+    const typing = target instanceof Element && target.closest('input, textarea, select, [contenteditable]');
+    // Bluetooth page turners and presentation clickers send these keys.
+    if (this.#reader && !this.#reader.finished && ['ArrowRight', 'ArrowDown', 'PageDown'].includes(event.key) && !typing) {
+      event.preventDefault();
+      this.#nextCue();
+      return;
+    }
     if (event.code !== 'Space' || this.#mode !== 'live') return;
     if (!['ready', 'countdown', 'recording'].includes(this.#state)) return;
     const focused = document.activeElement;
     if (focused && focused !== document.body && focused !== document.documentElement && focused !== this) return;
-    const target = event.composedPath()[0];
     if (target instanceof Element && target.closest('input, textarea, select, button, a, [contenteditable]')) return;
     if (this.checkVisibility && !this.checkVisibility()) return;
     event.preventDefault();
+    if (this.#readerOn()) unlockSpeech();
     this.#toggleRecording();
   };
 
@@ -1178,6 +1408,44 @@ function serverMessage(xhr) {
   }
 }
 
+/**
+ * POSTs a video as multipart/form-data, reporting progress. Used for
+ * upload-url, and handy for uploading saved videos later.
+ */
+export function postVideo({ url, blob, filename, field = 'video', fields = {}, withCredentials = false, onProgress = () => {} }) {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append(field, blob, filename);
+    for (const [name, value] of Object.entries(fields)) {
+      if (value !== null && value !== undefined && value !== '') form.append(name, String(value));
+    }
+    const xhr = new XMLHttpRequest(); // fetch() can't report upload progress
+    xhr.open('POST', url);
+    xhr.withCredentials = withCredentials;
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    });
+    xhr.addEventListener('load', () => {
+      if (xhr.status === 413) {
+        reject(new Error('This video is too big for the server. Try a shorter take, or 720p in Settings.'));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(serverMessage(xhr) || `Upload failed (HTTP ${xhr.status}).`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch {
+        resolve(xhr.responseText);
+      }
+    });
+    xhr.addEventListener('error', () => reject(new Error('Upload failed. Check your connection and try again.')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload cancelled.')));
+    xhr.send(form);
+  });
+}
+
 function createRecorder(stream, options) {
   try {
     return new MediaRecorder(stream, options);
@@ -1188,7 +1456,7 @@ function createRecorder(stream, options) {
 
 // Chrome writes WebM without a duration, so <video> reports Infinity and
 // can't scrub. Seeking far past the end makes it work out the real length.
-function fixDuration(video) {
+export function fixDuration(video) {
   return new Promise((resolve) => {
     if (Number.isFinite(video.duration)) {
       resolve();

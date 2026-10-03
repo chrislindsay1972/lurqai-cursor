@@ -1,16 +1,9 @@
-# Self-tape recorder
+# Self-tape studio and recorder
 
-`<self-tape-recorder>` is a drop-in web component that lets actors record audition self-tapes in the browser. It needs no app, plugin or build step: one JavaScript file works in any web page, including PHP, WordPress, React and Lovable sites.
+Two drop-in web components that let actors make audition self-tapes in the browser, on a phone or a computer. They need no app, plugin or build step: plain JavaScript files that work in any web page, including PHP, WordPress, React and Lovable sites.
 
-**What actors get**
-
-- A live camera preview with camera and microphone pickers, a mic level meter, a mirrored preview and framing guides.
-- Their **sides** shown over the preview, scrolling automatically while they record. The overlay is never part of the video.
-- A 3, 5 or 10-second **countdown** so they can get to their mark. The Space bar starts and stops a take.
-- **Scene** and **Slate** takes, with as many retakes as they like. They can play any take back, then **download** it or **submit** it, with an upload progress bar.
-- Casting-style filenames such as `Jane_Doe_Ophelia_Hamlet_Take2.mp4` and `Jane_Doe_Ophelia_Hamlet_Slate.mp4`.
-- An optional time limit that stops a take automatically.
-- Plain-language help when something goes wrong: the camera is blocked or in use by another app, the camera is unplugged mid-take, an in-app browser can't use the camera, or an upload is too large.
+- **`<self-tape-studio>`** is the whole flow. Actors add a script, choose their scenes and character, and record while the app reads the other parts. Then they review the take and share it by email.
+- **`<self-tape-recorder>`** is just the camera and recorder, for portals that already handle the scripts. The studio uses it inside.
 
 ## Try it
 
@@ -21,12 +14,71 @@ cd self-tape-recorder
 node dev-server.mjs
 ```
 
-Open <http://127.0.0.1:8080/>, turn the camera on, record a take and press **Submit**. The file is saved in `self-tape-recorder/uploads/`.
+- The studio: <http://127.0.0.1:8080/studio.html>
+- The recorder on its own: <http://127.0.0.1:8080/>
 
-## Add it to your portal
+Takes you submit are saved in `self-tape-recorder/uploads/`. Phones only allow the camera on HTTPS pages, so to try it on a phone, put it on an HTTPS site (see [Good to know](#good-to-know)).
 
-1. Copy `self-tape-recorder.js` into your site's static files.
-2. Load it and add the element to the audition page:
+## The studio
+
+The studio follows how actors already work with sides from their agent:
+
+1. **Add a script.** Tap **Add a script** and choose the PDF or Final Draft (.fdx) file. On iPhone, save the email attachment to Files first, then pick it from Files. The app splits the script into scenes and characters.
+2. **Choose scenes and a character.** Tick the scenes and pick your part. Each other part gets a voice, or "Don't read this part"; tap **Hear** for a sample.
+3. **Record.** Tap **Record these scenes**. The scene shows over the camera preview with your lines highlighted. The app reads the other parts aloud, and waits for you to finish each of your lines before giving the next cue. The take stops itself 2.5 seconds after the last line.
+4. **Save** the take. It goes to **My Videos**.
+5. **Review and share.** In My Videos, play the take back and tap **Share**. On a phone this opens the share sheet, where Mail attaches the video. On a computer it downloads the video and opens an email to attach it to. **Download**, **Submit** (to your portal) and delete are there too.
+
+### Add the studio to your portal
+
+Copy these five files into your site's static files, in the same folder: `self-tape-studio.js`, `self-tape-recorder.js`, `scene-reader.js`, `script-parser.js` and `studio-store.js`.
+
+```html
+<script type="module" src="/js/self-tape-studio.js"></script>
+
+<self-tape-studio
+  actor-name="Jane Doe"
+  storage-key="actor-1234"
+  upload-url="/upload.php">
+</self-tape-studio>
+```
+
+| Attribute | What it does |
+| --- | --- |
+| `actor-name` | Used in filenames and in the email ("Self-tape – Jane Doe – OPHELIA – Hamlet") |
+| `storage-key` | Keeps each signed-in actor's scripts and videos separate on a shared device. Use the actor's ID. |
+| `upload-url` | Shows **Submit** in My Videos. It sends the same POST as the recorder ([Receiving uploads](#receiving-uploads)), plus a `scenes` field. |
+| `upload-field`, `upload-credentials` | As for the recorder |
+| `pdfjs-src` | Where pdf.js is loaded from, the first time a PDF is added. Defaults to jsDelivr. To self-host, point it at your copy of `pdfjs-dist/legacy/build/pdf.min.mjs`, with `pdf.worker.min.mjs` beside it. |
+| `max-duration` | Time limit per take, in seconds |
+| `theme` | `light` (default), `dark`, or `auto` to follow the device setting |
+
+`addScript(file)` adds a script `File`, for example sides your portal already holds for an audition.
+
+The studio's events bubble out to your page: `script-added`, `script-deleted`, `video-saved`, `video-shared`, `video-submitted`, `video-deleted` and `studio-error`. For `video-shared`, `detail.method` is `share` (share sheet) or `email` (download and email).
+
+### Scripts it can read
+
+- **PDF** files with selectable text, laid out as a screenplay (most sides) or as a play. Page numbers, (MORE) and (CONT'D) page breaks, scene numbers, watermarks and pages printed at a reduced size are all handled. A scanned PDF (a picture of the pages) can't be read, and the app says so.
+- **Final Draft** `.fdx` files, from Final Draft 8 onwards. Older `.fdr` files need saving as `.fdx` or exporting as PDF first.
+- **Fountain** and **plain text**, including plays written `HAMLET. To be…` or with names on their own lines. Actors can also paste a scene.
+
+Unusual layouts can confuse it. The main known gap is two characters speaking at once, printed side by side in a PDF.
+
+### The reader
+
+- **Voices** are the device's own, so they're free and work offline. Which voices there are depends on the device.
+- **Listening:** the app tells when the actor has finished a line from the microphone. It waits for them to start speaking, then for a pause. The pause length is Short (0.7 s), Normal (1.2 s) or Long (2 s), set under **Sides**. Early in a long line, a dramatic pause doesn't count as the end.
+- **Skipping ahead:** **Next line** on screen, or a Bluetooth page turner or presentation clicker (Right or Down arrow, Page Down), moves straight to the next cue.
+- **In the recording:** the reader's voice comes out of the speaker and is recorded, like a reader in the room. With the phone's volume at about half, it stays quieter than the actor.
+
+### Where scripts and videos are kept
+
+They're kept on the device, in the browser's storage (IndexedDB), until the actor deletes them. Nothing is uploaded unless the actor taps **Submit**. Browsers, and Safari on iPhone especially, can clear storage for sites that haven't been used for a while. The studio asks the browser to keep it, and My Videos tells actors to share or submit the takes they want to keep.
+
+## The recorder on its own
+
+Copy `self-tape-recorder.js` and `scene-reader.js` into your site's static files, in the same folder. Then load the recorder and add the element to the audition page:
 
 ```html
 <script type="module" src="/js/self-tape-recorder.js"></script>
@@ -45,7 +97,15 @@ Open <http://127.0.0.1:8080/>, turn the camera on, record a take and press **Sub
 </script>
 ```
 
-The page must be served over **HTTPS**; `localhost` is fine for testing. Browsers block the camera on plain `http://`.
+**What actors get**
+
+- A live camera preview with camera and microphone pickers, a mic level meter, a mirrored preview and framing guides.
+- Their **sides** shown over the preview, scrolling automatically while they record. The overlay is never part of the video.
+- A 3, 5 or 10-second **countdown** so they can get to their mark. The Space bar starts and stops a take.
+- **Scene** and **Slate** takes, with as many retakes as they like. They can play any take back, then **download** it or **submit** it, with an upload progress bar.
+- Casting-style filenames such as `Jane_Doe_Ophelia_Hamlet_Take2.mp4` and `Jane_Doe_Ophelia_Hamlet_Slate.mp4`.
+- An optional time limit that stops a take automatically.
+- Plain-language help when something goes wrong: the camera is blocked or in use by another app, the camera is unplugged mid-take, an in-app browser can't use the camera, or an upload is too large.
 
 ### Receiving uploads
 
@@ -117,8 +177,21 @@ recorder.uploadHandler = async (take, { onProgress }) => {
 
 ### React (Vite, Lovable)
 
+The studio needs no wiring beyond its attributes:
+
 ```tsx
-// SelfTape.tsx: keep self-tape-recorder.js in the same folder.
+// Studio.tsx: keep the five studio files in the same folder.
+import './self-tape-studio.js';
+
+export function AuditionStudio({ actor }: { actor: { id: string; name: string } }) {
+  return <self-tape-studio actor-name={actor.name} storage-key={actor.id} upload-url="/api/self-tapes" />;
+}
+```
+
+The recorder with your own upload:
+
+```tsx
+// SelfTape.tsx: keep self-tape-recorder.js and scene-reader.js in the same folder.
 import { useEffect, useRef } from 'react';
 import './self-tape-recorder.js';
 
@@ -158,15 +231,25 @@ export function SelfTape(props: {
 }
 ```
 
-TypeScript needs to be told about the tag once, for example in `src/self-tape-recorder.d.ts`:
+TypeScript needs to be told about the tags once, for example in `src/self-tape-recorder.d.ts`:
 
 ```ts
 import type { DetailedHTMLProps, HTMLAttributes } from 'react';
 
+type HtmlProps = DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement>;
+
 declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
-      'self-tape-recorder': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & {
+      'self-tape-studio': HtmlProps & {
+        'actor-name'?: string;
+        'upload-url'?: string;
+        'storage-key'?: string;
+        'pdfjs-src'?: string;
+        'max-duration'?: number | string;
+        theme?: 'light' | 'dark' | 'auto';
+      };
+      'self-tape-recorder': HtmlProps & {
         'actor-name'?: string;
         character?: string;
         project?: string;
@@ -182,9 +265,9 @@ declare module 'react' {
 }
 ```
 
-Both snippets type-check against React 18 and React 19 types.
+These snippets type-check against React 18 and React 19 types.
 
-## Reference
+## Recorder reference
 
 ### Attributes
 
@@ -195,9 +278,11 @@ Both snippets type-check against React 18 and React 19 types.
 | `max-duration` | none | Time limit in seconds; the take stops automatically |
 | `countdown` | `3` | Seconds before recording starts (0–30) |
 | `quality` | `1080p` | `1080p` or `720p` |
+| `cue-pause` | `1.2` | In script mode, the seconds of silence that end the actor's line |
 | `upload-url` | – | Shows **Submit** and POSTs takes here |
 | `upload-field` | `video` | Form field name for the file |
 | `upload-credentials` | off | Send cookies with cross-origin uploads |
+| `submit-label`, `submitting-label`, `submitted-label` | `Submit`, `Uploading`, `Submitted` | Wording for the Submit button and its status |
 | `mime-type` | automatic | Force a recording format, such as `video/webm` |
 | `video-bitrate` | 6 Mbps at 1080p, 4 Mbps at 720p | Video bits per second |
 | `autostart` | off | Ask for the camera as soon as the page loads, instead of waiting for a click |
@@ -206,7 +291,9 @@ Both snippets type-check against React 18 and React 19 types.
 ### Properties and methods
 
 - `sides`: the sides text (read and write).
+- `script`: a scene to perform with the reader (read and write). See [Script mode](#script-mode).
 - `uploadHandler`: `async (take, { onProgress }) => result`. See [Custom uploads](#custom-uploads-supabase-s3-signed-urls-api-tokens).
+- `readerSpeak`: `async (line, { voice, signal }) => void`, to read lines with your own voices instead of the device's.
 - `takes`: all takes, newest first (read-only).
 - `state`: one of `off`, `starting`, `ready`, `countdown`, `recording`, `saving` or `error` (read-only).
 - `micLevel`: the current microphone level from 0 to 1 (read-only).
@@ -220,6 +307,16 @@ A **take** has these fields:
 - `thumbnail`, a JPEG data URL
 - `status`: `new`, `uploading`, `submitted` or `failed`
 
+### Script mode
+
+Set `script` to `{ title, character, lines, voices }` and the recorder shows the scene over the preview, with the actor's lines highlighted. While recording, it reads the other parts and listens for the actor's lines, as described in [The reader](#the-reader).
+
+- `lines`: the scene's lines, as `script-parser.js` produces them (`{ kind, text, character }`, where `kind` is `heading`, `action`, `dialogue` or `transition`).
+- `character`: the actor's part.
+- `voices` (optional): a `voiceURI` for each other character, or `'skip'` to leave a part unread.
+
+Set `script` to `null` to go back to plain sides.
+
 ### Events
 
 All events bubble and cross shadow DOM boundaries.
@@ -228,6 +325,7 @@ All events bubble and cross shadow DOM boundaries.
 | --- | --- |
 | `camera-ready` | `{ width, height, mimeType }` |
 | `recording-start` | `{ kind, mimeType }` |
+| `scene-end` | `{ recording }`, when the reader reaches the end of the script |
 | `take-recorded` | `{ take }` |
 | `take-submitted` | `{ take, result }` |
 | `take-deleted` | `{ id, label }` |
@@ -237,10 +335,10 @@ The `code` in `recorder-error` is one of `permission-denied`, `no-device`, `devi
 
 ### Styling
 
-Restyle the recorder with CSS custom properties: `--str-primary` (buttons), `--str-accent` (the Record button), `--str-bg`, `--str-surface`, `--str-border`, `--str-text`, `--str-muted`, `--str-radius` and `--str-font`. For deeper changes, the parts `container`, `stage`, `toolbar` and `takes` can be targeted with `::part()`.
+Restyle either component with CSS custom properties: `--str-primary` (buttons), `--str-accent` (the Record button), `--str-bg`, `--str-surface`, `--str-border`, `--str-text`, `--str-muted`, `--str-radius` and `--str-font`. Set them on the studio and they reach the recorder inside it. For deeper changes, the recorder's parts `container`, `stage`, `toolbar` and `takes` can be targeted with `::part()`.
 
 ```css
-self-tape-recorder {
+self-tape-studio {
   --str-primary: #7c3aed;
   --str-font: "Inter", sans-serif;
 }
@@ -264,10 +362,12 @@ ffmpeg -i take.webm -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
 
 ## Good to know
 
-- **Takes stay in the browser** until they're downloaded or submitted. If an actor tries to leave with unsaved takes, the browser asks them to confirm first.
+- **HTTPS:** phones only allow the camera on `https://` pages. `localhost` works on a computer for testing.
+- **Takes in the recorder** stay in the browser until they're downloaded, submitted or saved. If an actor tries to leave with unsaved takes, the browser asks them to confirm first.
 - **Natural sound:** voice processing (echo cancellation, noise suppression, auto gain) is off by default, so whispers and shouts keep their range. Actors can turn on **Noise reduction** in Settings.
 - **In-app browsers** in social and email apps often can't use the camera. The recorder tells actors to open the link in Chrome, Edge, Safari or Firefox.
 - **Phones in portrait:** the recorder suggests turning the phone sideways, because casting expects landscape video.
+- **Large videos by email:** iPhone Mail sends large attachments with Mail Drop. Other email services may refuse attachments over about 20–25 MB, so offer **Submit** to your portal as well.
 
 ## Tests
 
@@ -277,9 +377,8 @@ npx playwright install chromium
 npm test
 ```
 
-The smoke test records real takes from Chromium's fake camera and mic. It covers:
-- review, download (checked with `ffprobe` when installed) and upload, including a failed upload and its retry;
-- slates, the time limit and the Space shortcut;
-- deleting, MP4 and WebM output, and the blocked-camera and unsupported-browser messages.
+- `test/unit.mjs` runs without a browser. It covers how scripts are read and how the end of an actor's line is detected.
+- `test/smoke.mjs` records real takes from Chromium's fake camera. It covers review, download (checked with `ffprobe` when installed), uploads (including a failure and retry), slates, the time limit, the Space shortcut, deleting, MP4 and WebM output, and the error messages.
+- `test/studio.mjs` runs the studio on a phone-sized screen. It adds a PDF printed from `test/fixtures/sides.html` at full and reduced size, a Final Draft file and pasted text. It records with a generated "voice" as the microphone, then saves, reloads, plays back, shares, downloads, submits and deletes.
 
-So far it has only run in Chromium. Safari, iPhone and Firefox have not been tested yet.
+So far these tests have only run in Chromium. They haven't covered Safari on iPhone, Android or Firefox: the camera, the reader's voice during recording, the Files picker and the share sheet. They also haven't used real device voices or real-world PDFs beyond the test file.

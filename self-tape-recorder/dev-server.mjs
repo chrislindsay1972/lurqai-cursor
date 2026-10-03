@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Local server for trying the recorder: serves this folder and saves
+// Local server for trying the recorder and studio: serves this folder and saves
 // submitted takes to ./uploads (or $UPLOAD_DIR). Needs Node 20+.
 //
-//   node dev-server.mjs              -> http://127.0.0.1:8080
+//   node dev-server.mjs              -> http://127.0.0.1:8080 (studio: /studio.html)
 //   PORT=3000 node dev-server.mjs
 //
 // Browsers only allow camera access on https:// or localhost, so open the
@@ -92,5 +92,6 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Self-tape recorder demo: http://${host}:${server.address().port}/`);
+  const base = `http://${host}:${server.address().port}/`;
+  console.log(`Self-tape recorder demo: ${base}  ·  studio: ${base}studio.html`);
 });

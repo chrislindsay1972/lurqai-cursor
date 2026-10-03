@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<FinalDraft DocumentType="Script" Template="No" Version="5">
+  <Content>
+    <Paragraph Number="1" Type="Scene Heading">
+      <SceneProperties Length="1" Page="1" Title=""/>
+      <Text>INT. CASTLE BATTLEMENTS - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Wind tears at the torches. HAMLET stands alone, staring into the dark.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>HAMLET</Text>
+    </Paragraph>
+    <Paragraph Type="Parenthetical">
+      <Text>(whispering)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Angels and ministers of grace </Text>
+      <Text Style="Italic">defend</Text>
+      <Text> us!</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>The GHOST beckons.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>GHOST</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Mark me.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>HAMLET</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>I will.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>GHOST</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>My hour is almost come, when I to sulphurous and tormenting flames must render up myself.</Text>
+    </Paragraph>
+    <DualDialogue>
+      <Paragraph Type="Character">
+        <Text>HORATIO (O.S.)</Text>
+      </Paragraph>
+      <Paragraph Type="Dialogue">
+        <Text>My lord, my lord!</Text>
+      </Paragraph>
+      <Paragraph Type="Character">
+        <Text>MARCELLUS (O.S.)</Text>
+      </Paragraph>
+      <Paragraph Type="Dialogue">
+        <Text>Lord Hamlet!</Text>
+      </Paragraph>
+    </DualDialogue>
+    <Paragraph Type="Transition">
+      <Text>CUT TO:</Text>
+    </Paragraph>
+    <Paragraph Number="2" Type="Scene Heading">
+      <Text>INT. CASTLE - GREAT HALL - DAY</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>CLAUDIUS</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>But now, my cousin Hamlet, and my son —</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>HAMLET (V.O.)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>A little more than kin, and less than kind.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>GERTRUDE</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text>Good Hamlet, cast thy nighted colour off.</Text>
+    </Paragraph>
+  </Content>
+  <TitlePage>
+    <Content>
+      <Paragraph Alignment="Center" Type="Title">
+        <Text>THE BATTLEMENTS</Text>
+      </Paragraph>
+      <Paragraph Alignment="Center" Type="Title">
+        <Text>Written by</Text>
+      </Paragraph>
+    </Content>
+  </TitlePage>
+</FinalDraft>
